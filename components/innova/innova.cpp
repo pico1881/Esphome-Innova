@@ -46,11 +46,11 @@ void Innova::on_modbus_data(const std::vector<uint8_t> &data) {
     auto get_16bit = [&](int i) -> uint16_t { return (uint16_t(data[i * 2]) << 8) | uint16_t(data[i * 2 + 1]); };
 
     int value = get_16bit(0);
-    float f_value = (float) get_16bit(0);
+    float f_value = static_cast<float>(value) / 10.0;
 
     switch (this->state_) {
         case 1:
-            f_value /= 10.0;
+            //f_value /= 10.0;
             this->current_temp_ = f_value;
 	        if (this->air_temperature_sensor_ != nullptr)
                this->air_temperature_sensor_->publish_state(f_value);
@@ -58,7 +58,7 @@ void Innova::on_modbus_data(const std::vector<uint8_t> &data) {
             //ESP_LOGD(TAG, "Current temperature=%.1f", this->current_temp_);
         break;
         case 2:
-            f_value /= 10.0;
+            //f_value /= 10.0;
             this->target_temp_ = f_value;
             if (this->setpoint_sensor_ != nullptr)
                  this->setpoint_sensor_->publish_state(f_value);
@@ -90,9 +90,9 @@ void Innova::on_modbus_data(const std::vector<uint8_t> &data) {
             if (this->season_sensor_ != nullptr)
                 this->season_sensor_->publish_state(value);
 		
-            if (this->season_ == 3 && !((this->program_ & (0x0080)) == 128)) {
+            if (this->season_ == 3 && !(this->program_ & 0x0080)) {
                 climate_mode_callback_.call(3);
-            } else if (this->season_ == 5 && !((this->program_ & (0x0080)) == 128)) {
+            } else if (this->season_ == 5 && !(this->program_ & 0x0080)) {
                 climate_mode_callback_.call(2);
             } else {
                 climate_mode_callback_.call(0);
@@ -102,7 +102,7 @@ void Innova::on_modbus_data(const std::vector<uint8_t> &data) {
                 climate_action_callback_.call(3);	//heating
             } else if (this->season_ == 5 && this->fan_speed_ > 0) {
                 climate_action_callback_.call(2);	//cooling
-            } else if ((this->program_ & (0x0080)) == 128) {
+            } else if (this->program_ & 0x0080) {
                 climate_action_callback_.call(0);	//off
             } else {
                 climate_action_callback_.call(4);	//idle
@@ -111,7 +111,7 @@ void Innova::on_modbus_data(const std::vector<uint8_t> &data) {
            // ESP_LOGD(TAG, "Season=%d", this->season_);
         break;
         case 6:
-            f_value /= 10.0;
+            //f_value /= 10.0;
             this->water_temp_ = f_value;  
             if (this->water_temperature_sensor_ != nullptr)
                 this->water_temperature_sensor_->publish_state(f_value);
@@ -121,22 +121,30 @@ void Innova::on_modbus_data(const std::vector<uint8_t> &data) {
             this->out_reg_ = value;   
             if (this->out_reg_sensor_ != nullptr) 
                 this->out_reg_sensor_->publish_state(value);  
-            
+		
             if (this->boiler_relay_sensor_ != nullptr) {
-                if ((this->out_reg_ & (0x0008)) ) {
-                    this->boiler_relay_sensor_->publish_state(true); 
-                } else {
-                    this->boiler_relay_sensor_->publish_state(false); 
-                }
+                this->boiler_relay_sensor_->publish_state((this->out_reg_ & 0x0008) != 0); 
             }
-	
             if (this->chiller_relay_sensor_ != nullptr) {
-                if ((this->out_reg_ & (0x0004)) ) {
-                    this->chiller_relay_sensor_->publish_state(true); 
-                } else {
-                    this->chiller_relay_sensor_->publish_state(false); 
-                }
+                this->chiller_relay_sensor_->publish_state((this->out_reg_ & 0x0004) != 0); 
             }
+
+            
+            // if (this->boiler_relay_sensor_ != nullptr) {
+            //     if ((this->out_reg_ & (0x0008)) ) {
+            //         this->boiler_relay_sensor_->publish_state(true); 
+            //     } else {
+            //         this->boiler_relay_sensor_->publish_state(false); 
+            //     }
+            // }
+	
+            // if (this->chiller_relay_sensor_ != nullptr) {
+            //     if ((this->out_reg_ & (0x0004)) ) {
+            //         this->chiller_relay_sensor_->publish_state(true); 
+            //     } else {
+            //         this->chiller_relay_sensor_->publish_state(false); 
+            //     }
+            // }
 		
            // ESP_LOGD(TAG, "Output=%d", this->out_reg_);
         break;
@@ -165,7 +173,6 @@ void Innova::loop() {
         writeModbusRegister(this->writequeue_.front());
         this->writequeue_.pop_front();
     } else {
-	//this-write_data_ == false;
         send(CMD_READ_REG, REGISTER[this->state_ - 1], 1);        
     }
     
@@ -177,78 +184,120 @@ void Innova::update() {
     this->state_ = 1;
 }
 
+// void Innova::add_to_queue(uint8_t function, float new_value, uint16_t address) {
+//     WriteableData data;
+//     data.function_value = function;
+//     data.write_value = new_value;
+//     data.register_value = address;
+//     writequeue_.emplace_back(data);
+//    // ESP_LOGD(TAG, "Data write pending: function (%i), value (%i), address (%i)", data.function_value, data.write_value, data.register_value);
+// }
 void Innova::add_to_queue(uint8_t function, float new_value, uint16_t address) {
-    WriteableData data;
-    data.function_value = function;
-    data.write_value = new_value;
-    data.register_value = address;
+    WriteableData data{function, address, static_cast<uint16_t>(new_value)};
     writequeue_.emplace_back(data);
-   // ESP_LOGD(TAG, "Data write pending: function (%i), value (%i), address (%i)", data.function_value, data.write_value, data.register_value);
 }
 
+
+// void Innova::writeModbusRegister(WriteableData write_data) { 
+//     uint8_t payload[] = {(uint8_t)(write_data.write_value >> 8), (uint8_t)write_data.write_value };
+//     send( write_data.function_value,write_data.register_value,1,sizeof(payload),payload);
+//     this->waiting_for_write_ack_ = true ;
+// }
 void Innova::writeModbusRegister(WriteableData write_data) { 
-    uint8_t payload[] = {(uint8_t)(write_data.write_value >> 8), (uint8_t)write_data.write_value };
-    send( write_data.function_value,write_data.register_value,1,sizeof(payload),payload);
-    this->waiting_for_write_ack_ = true ;
+    uint8_t payload[] = {
+        static_cast<uint8_t>(write_data.write_value >> 8), 
+        static_cast<uint8_t>(write_data.write_value)
+    };
+    send(write_data.function_value, write_data.register_value, 1, sizeof(payload), payload);
+    this->waiting_for_write_ack_ = true;
 }
+
 
 void Innova::set_target_temp(int target_temp) {
         add_to_queue(CMD_WRITE_REG, target_temp, INNOVA_SETPOINT);
 	this->state_ = 1; //force modbus update
 }
 
+// void Innova::set_fan_mode(int fan_value) {
+//         int curr_prg = this->program_;
+//         int new_prg = curr_prg;
+//         switch (fan_value) {
+//             case 0: new_prg = (curr_prg & ~(0b111)); break;	
+//             case 1: new_prg = (curr_prg & ~(0b111)) | 1; break;		
+//             case 2: new_prg = (curr_prg & ~(0b111)) | 2; break;
+//             case 3: new_prg = (curr_prg & ~(0b111)) | 3;  break;
+//             default: new_prg = (curr_prg & ~(0b111)) | 1; break;
+//         }
+//         add_to_queue(CMD_WRITE_REG, new_prg, INNOVA_PROGRAM);
+// 	this->state_ = 1; //force modbus update
+// }
 void Innova::set_fan_mode(int fan_value) {
-        int curr_prg = this->program_;
-        int new_prg = curr_prg;
-        switch (fan_value) {
-            case 0: new_prg = (curr_prg & ~(0b111)); break;	
-            case 1: new_prg = (curr_prg & ~(0b111)) | 1; break;		
-            case 2: new_prg = (curr_prg & ~(0b111)) | 2; break;
-            case 3: new_prg = (curr_prg & ~(0b111)) | 3;  break;
-            default: new_prg = (curr_prg & ~(0b111)) | 1; break;
-        }
-        add_to_queue(CMD_WRITE_REG, new_prg, INNOVA_PROGRAM);
-	this->state_ = 1; //force modbus update
+    int new_prg = (this->program_ & ~0b111) | fan_value;
+    add_to_queue(CMD_WRITE_REG, new_prg, INNOVA_PROGRAM);
+    this->state_ = 1; // force modbus update
 }
 
-void Innova::set_key_lock(bool key_lock) {
-        int curr_prg = this->program_;
-        int new_prg = curr_prg;	
-   	if (key_lock) {
-		new_prg = curr_prg | (1 << 4);  
-		add_to_queue(CMD_WRITE_REG,new_prg, INNOVA_PROGRAM);
-   	} else {
-                new_prg = curr_prg & ~(1 << 4);  
-                add_to_queue(CMD_WRITE_REG,new_prg, INNOVA_PROGRAM);
-    	}
+// void Innova::set_key_lock(bool key_lock) {
+//         int curr_prg = this->program_;
+//         int new_prg = curr_prg;	
+//    	if (key_lock) {
+// 		new_prg = curr_prg | (1 << 4);  
+// 		add_to_queue(CMD_WRITE_REG,new_prg, INNOVA_PROGRAM);
+//    	} else {
+//                 new_prg = curr_prg & ~(1 << 4);  
+//                 add_to_queue(CMD_WRITE_REG,new_prg, INNOVA_PROGRAM);
+//     	}
 	
-	this->state_ = 1; //force modbus update
+// 	this->state_ = 1; //force modbus update
+// }
+void Innova::set_key_lock(bool key_lock) {
+    int new_prg = key_lock ? (this->program_ | (1 << 4)) : (this->program_ & ~(1 << 4));
+    add_to_queue(CMD_WRITE_REG, new_prg, INNOVA_PROGRAM);
+    this->state_ = 1; // force modbus update
 }
 
+// void Innova::set_clima_mode(int mode_value) {
+//         int curr_prg = this->program_;
+//         int new_prg = curr_prg;
+//         switch (mode_value) {
+//             case 1: 
+// 		new_prg = curr_prg | (1 << 7);  
+// 		add_to_queue(CMD_WRITE_REG,new_prg, INNOVA_PROGRAM);
+// 	    break;	
+//             case 2: 
+//                 add_to_queue(CMD_WRITE_REG,3, INNOVA_SEASON);
+//                 new_prg = curr_prg & ~(1 << 7);  
+//                 add_to_queue(CMD_WRITE_REG,new_prg, INNOVA_PROGRAM);
+//             break;		
+//             case 3: 
+//                 add_to_queue(CMD_WRITE_REG,5, INNOVA_SEASON);
+//                 new_prg = curr_prg & ~(1 << 7);
+//                 add_to_queue(CMD_WRITE_REG,new_prg, INNOVA_PROGRAM);
+//             break;
+
+//             default:
+//             break;
+//         }
+
+// 	    this->state_ = 1; //force modbus update
+// }
 void Innova::set_clima_mode(int mode_value) {
-        int curr_prg = this->program_;
-        int new_prg = curr_prg;
-        switch (mode_value) {
-            case 1: 
-		new_prg = curr_prg | (1 << 7);  
-		add_to_queue(CMD_WRITE_REG,new_prg, INNOVA_PROGRAM);
-	    break;	
-            case 2: 
-                add_to_queue(CMD_WRITE_REG,3, INNOVA_SEASON);
-                new_prg = curr_prg & ~(1 << 7);  
-                add_to_queue(CMD_WRITE_REG,new_prg, INNOVA_PROGRAM);
-            break;		
-            case 3: 
-                add_to_queue(CMD_WRITE_REG,5, INNOVA_SEASON);
-                new_prg = curr_prg & ~(1 << 7);
-                add_to_queue(CMD_WRITE_REG,new_prg, INNOVA_PROGRAM);
+    switch (mode_value) {
+        case 1:
+            add_to_queue(CMD_WRITE_REG, this->program_ | (1 << 7), INNOVA_PROGRAM);
             break;
-
-            default:
+        case 2:
+            add_to_queue(CMD_WRITE_REG, 3, INNOVA_SEASON);
+            add_to_queue(CMD_WRITE_REG, this->program_ & ~(1 << 7), INNOVA_PROGRAM);
             break;
-        }
-
-	    this->state_ = 1; //force modbus update
+        case 3:
+            add_to_queue(CMD_WRITE_REG, 5, INNOVA_SEASON);
+            add_to_queue(CMD_WRITE_REG, this->program_ & ~(1 << 7), INNOVA_PROGRAM);
+            break;
+        default:
+            break;
+    }
+    this->state_ = 1; // force modbus update
 }
 
 void Innova::dump_config() { 
