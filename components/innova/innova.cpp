@@ -77,11 +77,13 @@ void Innova::on_modbus_data(const std::vector<uint8_t> &data) {
                 this->program_sensor_->publish_state(value);
             fan_mode_callback_.call(value & 0b111);  
 		
-            if ((this->program_ & (0x0010)) == 16) {
-                key_lock_callback_.call(true);
-            } else {
-		key_lock_callback_.call(false);
-	    }
+  //           if ((this->program_ & (0x0010)) == 16) {
+  //               key_lock_callback_.call(true);
+  //           } else {
+		// key_lock_callback_.call(false);
+	 //    }
+	 key_lock_callback_.call((this->program_ & 0x0010) == 16);
+
 		    
 	   // ESP_LOGD(TAG, "Program=%d", this->program_);
         break;
